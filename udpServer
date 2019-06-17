@@ -191,11 +191,388 @@ VALUES (%s, %s, %s, %s, %s, %s, %s) "
 
 s.close()
 
+9.  put the code in Arduino Mega
+9.1 Wiring Mega and GPS module + DHT11
+	Connect GPS Module to TX/RX 1
+	Connect DHT11 signal pin to D6
+	Connect nbIOTshield pin 8 --> D48 (mega)
+		            pin 9 --> D46 (mega)
 
-9.  execute this command on the terminal screen:
+9.2 comply and upload program to Arduino
+
+	#include<IOXhop_BC95.h>
+	#include "AIS_NB_BC95.h"
+
+	IOXhop_BC95 nb;
+	Socket *soc = NULL;
+
+	unsigned long timeSend = 0, timeSend2 = 0;
+
+	#include <LiquidCrystal_I2C.h>
+	#include <ArduinoJson.h>
+	
+	#include <Arduino.h>
+	static const int RXPin = 10, TXPin = 11;//D10 -> Tx(GPS), D11 -> RX(GPS)
+
+	String filename = "yourfilename.ino";
+
+	String jsonData ="";
+	float t,h;
+	String cntStr = "";
+	String speedStr = "";
+
+	LiquidCrystal_I2C lcd(0x27,16,4); 
+	const long interval = 15000;  //millisecond
+	unsigned long previousMillis = 0;
+	#include "DHT.h"
+	#define DHTPIN 6
+	#define DHTTYPE DHT11
+	DHT dht(DHTPIN, DHTTYPE);
+	int cnt =0;
+	int dispCounter =0;
+	float tDHT;
+	float hDHT;
+	char response[50];
+	float latitude = 0.000000;
+	float longitude = 0.000000;
+	String tDHTStr = "";String hDHTStr = "";
+	String output;
+	int updates;
+	int failedUpdates;
+	int pos;
+	int stringplace = 0;
+	String timeUp;
+	String nmea[15];
+	String labels[12] {"Time: ", "Status: ", "Latitude: ", "Hemisphere: ", "Longitude: ", "Hemisphere: ", "Speed: ", "Track Angle: ", "Date: "};
+	char buf[512];
+	AIS_NB_BC95 AISnb;
+
+	void setup() {
+	  Serial.begin(9600);Serial1.begin(9600);
+	  lcd.init();
+	  lcd.backlight();
+	  lcd.clear();
+	  lcd.setCursor(0,0);
+	  lcd.print("NB IOT Project..");
+	  lcd.setCursor(0,1);
+	  lcd.print("+ udp Server    ");
+	  delay(1000);
+
+	  lcdBlink(3,500);
+	  // Setup module
+	  nb.easySetup(true);
+
+	  // Socket
+	  Serial.println("Create new socket");
+	  if (soc = nb.CreateUDPSocket(9687)) {
+	    Serial.print("Socket id is ");
+	    Serial.println(soc->getID());
+	  } else {
+	    Serial.println("Create fail !");
+	  }
+
+	  soc->onReceiver([](String ip, unsigned long port, byte* data, int len) {
+	    char message[len + 1];
+	    memcpy(message, data, len);
+	    message[len] = 0;
+	    Serial.print("Receiver[" + ip + ":" + String(port) + "]: ");
+	    Serial.println(message);
+	    previousMillis = millis();
+	    delay(1000);
+	  });
+	}
+	void lcdBlink(int a,int b){
+	    for (int f = 0; f <a;f++){
+	    lcd.noBacklight();
+	    delay(b);
+	    lcd.backlight();
+	    delay(b);
+	  }
+	}
+	void readDHT11(){
+	      // get data from DHT22 sensor
+	      float htempo = dht.readHumidity();
+	      float ttempo = dht.readTemperature();
+	      delay(50);
+		if (isnan(htempo)){
+		  Serial.println("h = NAN");
+		}
+		else {
+		  hDHT = htempo;
+		  //Serial.print(" Humi= ");Serial.println(hDHT);
+		}
+		if (isnan(ttempo)){
+		  Serial.println("t = NAN");
+		}
+		else {
+		  tDHT = ttempo;
+		  //Serial.print("Temp= ");Serial.println(tDHT);
+		}
+	}
+	void loop() {
+	  readDHT11(); 
+	  long timeLeft = (interval - (millis() - previousMillis))/1000;
+	  char timebuff[3] = ""; ///< This is the buffer for the string the sprintf outputs to
+	  sprintf(timebuff, "%03d", timeLeft); 
+	  Serial.print("Time left= ");
+	  Serial.println(timeLeft); //seconds to Post
+	  lcd.setCursor(13,1);
+	  lcd.println(timebuff);  
+	  if (soc) {
+	    if ((millis() - previousMillis) >= interval) { // every 5 sec
+	      previousMillis = millis();
+	      cnt ++;
+	      lcd.backlight();
+	      if (cnt>=100) cnt =0; 
+	      //String testStr = "Hello udp, How r u today?";
+	      //testStr += "Count# ";
+	      //testStr += String(cnt);
+	      //testStr.toCharArray(buf, testStr.length()+1);
+	      Serial.print("Send ");
+
+	      if (soc->send("x.x.x.x", portnumber, buf, jsonData.length()+1)) {
+		Serial.println("OK");
+
+	      } else {
+		Serial.println("fail !");
+	      }
+	    }
+	  }
+	  if ((millis() - previousMillis) >= interval/4) {
+	    lcd.noBacklight();
+	  }
+	  gpsRead();
+	  jsonFormat();
+	  lcdDisplay();
+	  delay(1000);
+	  //nb.loop();
+	}
+	void jsonFormat(){
+	  speedTxt();
+	  cntTxt();
+	  jsonData = '{';
+
+	  jsonData += '"';
+	  jsonData += "latitude";
+	  jsonData += '"';
+	  jsonData += ':';
+	  jsonData += '"';
+	  jsonData += nmea[2];
+	  jsonData += '"';
+	  jsonData += ',';
+
+	  jsonData += '"';
+	  jsonData += "longitude";
+	  jsonData += '"';
+	  jsonData += ':';
+	  jsonData += '"';
+	  jsonData += nmea[4];
+	  jsonData += '"';
+	  jsonData += ',';
+
+	  jsonData += '"';
+	  jsonData += "speed";
+	  jsonData += '"';
+	  jsonData += ':';
+	  jsonData += '"';
+	  jsonData += speedStr;
+	  jsonData += '"';
+	  jsonData += ',';
+
+	  jsonData += '"';
+	  jsonData += "ddate";
+	  jsonData += '"';
+	  jsonData += ':';
+	  jsonData += '"';
+	  jsonData += nmea[8];
+	  jsonData += '"';
+	  jsonData += ',';
+
+	  jsonData += '"';
+	  jsonData += "temp";
+	  jsonData += '"';
+	  jsonData += ':';
+	  jsonData += '"';
+	  jsonData += String(tDHT);
+	  jsonData += '"';
+	  jsonData += ',';
+
+	  jsonData += '"';
+	  jsonData += "cnt";
+	  jsonData += '"';  
+	  jsonData += ':';
+	  jsonData += '"';  
+	  jsonData += cntStr;
+	  jsonData += '"';
+
+	  jsonData += "}";
+
+	  Serial.print("jsonData= ");
+	  Serial.println(jsonData);
+	  int len = jsonData.length();
+	  jsonData.toCharArray(buf, len+1);
+	  Serial.print("buf:");
+	  Serial.println(buf);
+	}
+	void speedTxt(){
+	  if (nmea[6] = ""){
+	    speedStr = "000";
+	  }
+	  else {
+	    char timebuff[3] = ""; ///< This is the buffer for the string the sprintf outputs to
+	    sprintf(timebuff, "%03d", nmea[6].toInt());
+	    speedStr = "";
+	    for (int i =0;i<3;i++){
+	      speedStr += timebuff[i]; 
+	    }
+	  }
+	}
+	void cntTxt(){
+	  //float speedFloat = nmea[6].toFloat();
+	  char timebuff[2] = ""; ///< This is the buffer for the string the sprintf outputs to
+	  sprintf(timebuff, "%02d", cnt);
+	  cntStr = "";
+	  for (int i =0;i<2;i++){
+	    cntStr += timebuff[i]; 
+	  }
+	}
+	String ConvertLat() {
+	    String posneg = "";
+	    if (nmea[3] == "S") {
+		posneg = "-";
+	    }
+	    String latfirst;
+	    float latsecond;
+	    for (int i = 0; i < nmea[2].length(); i++) {
+		if (nmea[2].substring(i, i + 1) == ".") {
+		  latfirst = nmea[2].substring(0, i - 2);
+		  latsecond = nmea[2].substring(i - 2).toFloat();
+		}
+	    }
+	    latsecond = latsecond / 60;
+	    String CalcLat = "";
+
+	    char charVal[9];
+	    dtostrf(latsecond, 4, 6, charVal);
+	    for (int i = 0; i < sizeof(charVal); i++)
+	    {
+	      CalcLat += charVal[i];
+	    }
+	    latfirst += CalcLat.substring(1);
+	    latfirst = posneg += latfirst;
+	    return latfirst;
+	}
+
+	String ConvertLng() {
+	    String posneg = "";
+	    if (nmea[5] == "W") {
+		posneg = "-";
+	    }
+	    String lngfirst;
+	    float lngsecond;
+	    for (int i = 0; i < nmea[4].length(); i++) {
+		if (nmea[4].substring(i, i + 1) == ".") {
+		    lngfirst = nmea[4].substring(0, i - 2);
+		    //Serial.println(lngfirst);
+		    lngsecond = nmea[4].substring(i - 2).toFloat();
+		    //Serial.println(lngsecond);
+		}
+	    }
+	    lngsecond = lngsecond / 60;
+	    String CalcLng = "";
+	    char charVal[9];
+	    dtostrf(lngsecond, 4, 6, charVal);
+	    for (int i = 0; i < sizeof(charVal); i++)
+	    {
+		CalcLng += charVal[i];
+	    }
+	    lngfirst += CalcLng.substring(1);
+	    lngfirst = posneg += lngfirst;
+	    return lngfirst;
+	}
+	void gpsRead(){
+	    Serial1.flush();
+	    //GPSModule.flush();
+	    while (Serial1.available() > 0)
+	    {
+	      Serial1.read();
+	    }
+	    if (Serial1.find("$GPRMC,")) {
+		String tempMsg = Serial1.readStringUntil('\n');
+		for (int i = 0; i < tempMsg.length(); i++) {
+		    if (tempMsg.substring(i, i + 1) == ",") {
+		      nmea[pos] = tempMsg.substring(stringplace, i);
+		      stringplace = i + 1;
+		      pos++;
+		    }
+		    if (i == tempMsg.length() - 1) {
+		      nmea[pos] = tempMsg.substring(stringplace, i);
+		    }
+		}
+		updates++;
+		nmea[2] = ConvertLat();
+		nmea[4] = ConvertLng();
+		/*
+		for (int i = 0; i < 9; i++) {
+		    Serial.print(labels[i]);
+		    Serial.print(nmea[i]);
+		    Serial.println("");
+		}*/
+	    }
+	    else {
+	    failedUpdates++;
+	    }
+	    stringplace = 0;
+	    pos = 0;
+	    //GPSModule.flush();
+	}
+	void lcdDisplay(){
+	  switch (dispCounter){
+	    case 0:
+		lcd.clear();
+		lcd.setCursor(0,0);
+		lcd.print("Date:");
+		lcd.print(nmea[8]);
+		lcd.setCursor(0,1);
+		lcd.print("Speed:");
+		lcd.print(nmea[6]);
+		dispCounter ++;
+		break;  
+	    case 1:
+		lcd.clear();
+		lcd.setCursor(0,0);
+		lcd.print("Lat:");
+		lcd.print(nmea[2]);
+		lcd.setCursor(0,1);
+		lcd.print("Lon:");
+		lcd.print(nmea[4]);
+		dispCounter ++;
+		break;   
+	    case 2:
+		  lcd.clear();
+		  lcd.setCursor(0,0);
+		  lcd.print("ambT= ");
+		  lcd.setCursor(6,0);
+		  lcd.print(tDHT);
+		  lcd.setCursor(0,1);
+		  lcd.print("ambH= ");
+		  lcd.setCursor(6,1);
+		  lcd.print(hDHT);
+		dispCounter =0;
+		break;
+	      default:
+		  lcd.clear();
+		  lcd.setCursor(0,0);
+		  lcd.print("Error !!!");
+		  dispCounter =0;
+		  break;
+	  }
+	}
+
+10.  execute this command on the terminal screen:
   
       ExecStart= /usr/bin/python /opt/lampp/htdocs/udpIOT/udpIOT.py
     
-  The String will be displayed, if every thing is correct.
+  The String will be displayed, if every thing is correct. A record will be inserted into the database.
   
   
