@@ -1,0 +1,201 @@
+This example illustrate how to send data from Arduino sensor (DHT11 & GPS Module) to GCE.
+1. To set up GCE (in my case OS is Centos 7), please follow the normal procedure until you get an IP address.
+2. Set up GCE firewall to allow your port to be connected.
+3. install nc to check the incoming json format data.
+4. - for a Linux Server
+   # yum install nc
+5. Test UDP port connectivity with nc command
+   # nc -z -v -u [hostname/IP address] [port number]
+6. Listen to UDP data with nc command
+   #nc -ulp [port#]
+   ex.
+   #nc -ulp 2000
+   if data arrived and can access to your engine, the data string will displayed. if you do not have a code to send udp data, please follow step 7.
+ 7. create Arduino code for udp data
+ 7.1 Down load library at:
+     https://github.com/ioxhop/IOXhop_BC95
+ 7.2 use test.ino in the example file or below:
+ 
+ //beginning of file
+ /* File              : test.ino
+   Codeing By IOXhop : www.ioxhop.com
+   Sonthaya Nongnuch : www.fb.me/maxthai */
+
+#include<IOXhop_BC95.h>
+
+IOXhop_BC95 nb;
+Socket *soc = NULL;
+
+unsigned long timeSend = 0, timeSend2 = 0;
+
+void setup() {
+  Serial.begin(9600);
+
+  // Setup module
+  nb.easySetup(true);
+
+  // Socket
+  Serial.println("Create new socket");
+  if (soc = nb.CreateUDPSocket(9687)) {
+    Serial.print("Socket id is ");
+    Serial.println(soc->getID());
+  } else {
+    Serial.println("Create fail !");
+  }
+  
+  soc->onReceiver([](String ip, unsigned long port, byte* data, int len) {
+    char message[len + 1];
+    memcpy(message, data, len);
+    message[len] = 0;
+    Serial.print("Receiver[" + ip + ":" + String(port) + "]: ");
+    Serial.println(message);
+  });
+}
+
+void loop() {
+  if (soc) {
+    if ((millis() - timeSend) >= 5000) { // every 5 sec
+      timeSend = millis();
+      char text[] = "Hello, NB-IoT !";
+      Serial.print("Send ");
+      if (soc->send("x.x.x.x", 1111, text, strlen(text))) {
+        Serial.println("OK");
+      } else {
+        Serial.println("fail !");
+      }
+    }
+  }
+  
+  nb.loop();
+}
+   
+//end of file
+
+At line # 61, change x.x.x.x to your server IP and 1111 to your port number. 
+
+8. Set up your udp server using python.
+8.1 create python application using udp_service.py 
+      # sudo vi /usr/bin/udp_service.py
+  add the following content to udp_service.py (use 2000 port number)
+  
+      #!/usr/bin/python3
+      import socket
+      s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      s.bind(("localhost", 2000))
+      s.listen(1)
+
+      while True:
+          conn, addr = s.accept()
+          data = conn.recv(1024)
+          conn.close()
+          my_function_that_handles_data(data)
+
+Then save and quit.
+
+8.2 Create a service file (udp.service)
+    You need to install xampp for phpmyadmin and mySQL server prior to do this item. I create directory udpIOT under htdocs folder, 
+    you may change to another folder but need to change the path in line 109 below. If another .py name is used, do not forget to change
+    in line 109 as well.
+
+      # sudo vi /lib/systemd/system/udp.service
+      
+  add the following content in it.
+  
+      [Unit]
+      Description=Udp Service
+      After=multi-user.target
+      Conflicts=getty@tty1.service
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python /opt/lampp/htdocs/udpIOT/udpIOT.py 
+      StandardInput=tty-force
+      [Install]
+      WantedBy=multi-user.target
+
+  then quit and save.
+
+8.3 Create a python script file (example)
+  
+# python script for udp server
+# complied by Dr. Pasidth T.
+
+import socket
+import sys
+import json
+import mysql.connector
+HOST = '0.0.0.0'        # Symbolic name meaning all available interfaces
+PORT = 2002     # Arbitrary non-privileged port
+rlat = 0
+rlong = 0
+rdate  = 0
+rspeed = 0
+rambT = 0
+rambH = 0
+dtat = ""
+# Datagram (udp) socket
+localIP     = "127.0.0.1"
+localPort   = 2002
+bufferSize  = 1024
+msgFromServer       = "Hello UDP Client"
+bytesToSend         = str.encode(msgFromServer)
+# Create a datagram socket
+UDPServerSocket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+# Bind to address and ip
+UDPServerSocket.bind((HOST, PORT))
+print("UDP server up and listening")
+# Listen for incoming datagrams
+while(True):
+    bytesAddressPair = UDPServerSocket.recvfrom(bufferSize)
+    message = bytesAddressPair[0]
+    address = bytesAddressPair[1]
+    clientMsg = "Message from Client:{}".format(message)
+    clientIP  = "Client IP Address:{}".format(address)
+    print 'message='
+    print message
+    print 'clientMsg='
+    print clientMsg
+    print 'clientIP='
+    print clientIP
+    y = json.dumps(message)
+    print 'dumps='
+    print y
+    rlat = y[17:26]
+    rlong = y[45:55]
+	rspeed = y[70:73]
+    rdate = y[88:94]
+    rtemp = y[108:113]
+    rcnt = y[126:128]
+    rpos = rlat+','+rlong
+    print 'location:'+rpos
+    print 'latitude: '+rlat
+    print 'longitude: '+rlong
+    print 'speed:'+rspeed
+    print 'date:'+rdate
+    print 'temp:'+rtemp
+    print 'counter:'+rcnt
+    # Sending a reply to client
+    UDPServerSocket.sendto(bytesToSend, address)
+    mydb = mysql.connector.connect(
+                host="localhost",
+                user="root",
+                passwd="yourpassword",
+                database="yourdatabase"
+    )
+    mycursor = mydb.cursor()
+    sql = "INSERT INTO yourdatabase.yourtable (location,latitude,longitude,ddate,speed,ambT,counter) 
+VALUES (%s, %s, %s, %s, %s, %s, %s) "
+    val = (rpos,rlat,rlong,rdate,rspeed,rtemp,rcnt)
+    mycursor.execute(sql, val)
+    mydb.commit()
+    print(mycursor.rowcount, 'record inserted.')
+
+s.close()
+
+
+9.  execute this command on the terminal screen:
+  
+      ExecStart= /usr/bin/python /opt/lampp/htdocs/udpIOT/udpIOT.py
+    
+  The String will be displayed, if every thing is correct.
+  
+  
