@@ -574,5 +574,22 @@ s.close()
       ExecStart= /usr/bin/python /opt/lampp/htdocs/udpIOT/udpIOT.py
     
   The String will be displayed, if every thing is correct. A record will be inserted into the database.
-  
-  
+
+11. Enable udp.service
+	
+	# sudo systemctl enable udp.service
+	# sudo systemctl start udp.service
+	
+   Check status with this comand:
+   
+	# sudo systemctl status udp.service
+	
+   To restart the service:
+   
+   	# sudo systemctl restart dummy.service
+	
+   To stop the service:
+   
+   	# sudo systemctl stop udp.service
+	
+// end of file ...
